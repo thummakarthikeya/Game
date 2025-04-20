@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Dino Runner</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+
+        #score {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 24px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        #high-score {
+            position: absolute;
+            top: 70px;
+            right: 20px;
+            color: gold;
+            font-size: 24px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);
+        }
+
+        #restart-button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin-top: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        #restart-button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    <div id="score">Score: 0</div>
+    <div id="high-score">High Score: 0</div>
+    <div id="game-over">
+        <h2>Game Over!</h2>
+        <p>Your score: <span id="final-score">0</span></p>
+        <p>High score: <span id="final-high-score">0</span></p>
+        <button id="restart-button">Restart Game</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Game variables
+        let scene, camera, renderer;
+        let player;
+        let obstacles = [];
+        let clouds = [];
+        let birds = []; // Array to store bird objects
+        let grassBlades = []; // Array to store grass objects
+        let powerUps = []; // Array to store power-ups
+        let isJumping = false;
+        let isCrouching = false;
+        let jumpVelocity = 0;
+        let gravity = 0.012;
+        let baseGameSpeed = 0.25;
+        let maxGameSpeed = 0.8;
+        let speedIncreaseRate = 0.0001; // Smaller value for smoother acceleration
+        let gameSpeed = baseGameSpeed;
+        let timeSinceStart = 0;
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('highScore')) || 0;
+        let scoreMultiplier = 1;
+        let gameActive = true;
+        let ground;
+        let lastObstacleTime = 0;
+        let obstacleSpawnDelay = 1000;
+        let targetObstacleCount = 3;
+        let minObstacleSpacing = 75;
+        let maxObstacleSpacing = 125;
+        let initialSpawnDistance = -100;
+        let cameraOffset = new THREE.Vector3(7, 5, 12);
+        let obstaclesPassed = 0;
+        let difficultyInterval = 2;
+        let cloudCount = 10;
+        let birdCount = 5; // Number of birds to create
+        let windTime = 0; // Time variable for wind animation
+
+        // Initialize the game
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // Sky blue background
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 10, 15);
+            camera.lookAt(0, 0, 0);
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.getElementById('game-container').appendChild(renderer.domElement);
+
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 7);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 1024;
+            directionalLight.shadow.mapSize.height = 1024;
+            scene.add(directionalLight);
+
+            // Add sky and clouds
+            createSkyAndClouds();
+
+            // Create ground
+            createGround();
+
+            // Create player (dinosaur-like creature)
+            createPlayer();
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+            // Handle keyboard controls
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
+            // Handle restart button
+            document.getElementById('restart-button').addEventListener('click', restartGame);
+
+            // Display initial high score
+            updateHighScore();
+        }
+
+        function createPlayer() {
+            // Create a simple dinosaur-like shape using multiple boxes
+            const playerGroup = new THREE.Group();
+
+            // Body
+            const bodyGeometry = new THREE.BoxGeometry(1, 1, 2);
+            const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x4CAF50 });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.5;
+            body.castShadow = true;
+            playerGroup.add(body);
+
+            // Head
+            const headGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+            const headMaterial = new THREE.MeshPhongMaterial({ color: 0x4CAF50 });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.set(0, 0.9, 1);
+            head.castShadow = true;
+            playerGroup.add(head);
+
+            // Tail
+            const tailGeometry = new THREE.BoxGeometry(0.5, 0.5, 1.5);
+            const tailMaterial = new THREE.MeshPhongMaterial({ color: 0x4CAF50 });
+            const tail = new THREE.Mesh(tailGeometry, tailMaterial);
+            tail.position.set(0, 0.5, -1.5);
+            tail.castShadow = true;
+            playerGroup.add(tail);
+
+            // Legs
+            const legGeometry = new THREE.BoxGeometry(0.3, 0.8, 0.3);
+            const legMaterial = new THREE.MeshPhongMaterial({ color: 0x4CAF50 });
+            
+            const leg1 = new THREE.Mesh(legGeometry, legMaterial);
+            leg1.position.set(0.4, 0, 0.5);
+            leg1.castShadow = true;
+            playerGroup.add(leg1);
+
+            const leg2 = new THREE.Mesh(legGeometry, legMaterial);
+            leg2.position.set(-0.4, 0, 0.5);
+            leg2.castShadow = true;
+            playerGroup.add(leg2);
+
+            const leg3 = new THREE.Mesh(legGeometry, legMaterial);
+            leg3.position.set(0.4, 0, -0.5);
+            leg3.castShadow = true;
+            playerGroup.add(leg3);
+
+            const leg4 = new THREE.Mesh(legGeometry, legMaterial);
+            leg4.position.set(-0.4, 0, -0.5);
+            leg4.castShadow = true;
+            playerGroup.add(leg4);
+
+            player = playerGroup;
+            player.position.set(0, 0, 0);
+            scene.add(player);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function handleKeyDown(event) {
+            if (!gameActive) return;
+
+            switch(event.code) {
+                case 'Space':
+                    if (!isJumping && !isCrouching) {
+                        isJumping = true;
+                        jumpVelocity = 0.5; // Increased initial jump velocity
+                    }
+                    break;
+                case 'ArrowDown':
+                    if (!isJumping) {
+                        isCrouching = true;
+                        player.scale.y = 0.5;
+                    }
+                    break;
+            }
+        }
+
+        function handleKeyUp(event) {
+            if (event.code === 'ArrowDown') {
+                isCrouching = false;
+                player.scale.y = 1;
+            }
+        }
+
+        function getLastObstacleZ() {
+            if (obstacles.length === 0) return initialSpawnDistance;
+            return obstacles.reduce((minZ, obs) => 
+                Math.min(minZ, obs.mesh.position.z), Infinity);
+        }
+
+        function createPowerUp(zPosition) {
+            const powerUpGroup = new THREE.Group();
+            
+            // Create crystal shape for power-up
+            const geometry = new THREE.OctahedronGeometry(0.5, 0);
+            const material = new THREE.MeshPhongMaterial({
+                color: 0xffff00, // Yellow for score multiplier
+                shininess: 100,
+                transparent: true,
+                opacity: 0.8
+            });
+            const crystal = new THREE.Mesh(geometry, material);
+            
+            // Add glow effect
+            const glowGeometry = new THREE.OctahedronGeometry(0.7, 0);
+            const glowMaterial = new THREE.MeshPhongMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.3
+            });
+            const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+            
+            powerUpGroup.add(crystal);
+            powerUpGroup.add(glow);
+
+            // Position power-up
+            powerUpGroup.position.set(0, 1.2, zPosition);
+
+            scene.add(powerUpGroup);
+            powerUps.push({
+                mesh: powerUpGroup,
+                rotationSpeed: 0.02,
+                bouncePhase: Math.random() * Math.PI * 2,
+                active: true
+            });
+        }
+
+        function createObstacle() {
+            const obstacleGeometry = new THREE.SphereGeometry(0.8, 32, 32);
+            const obstacleMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x8B4513,
+                shininess: 30
+            });
+            const obstacle = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
+            
+            // Calculate spawn position
+            let spawnZ;
+            if (obstacles.length === 0) {
+                spawnZ = initialSpawnDistance;
+            } else {
+                const lastZ = getLastObstacleZ();
+                const spacing = minObstacleSpacing + Math.random() * (maxObstacleSpacing - minObstacleSpacing);
+                spawnZ = lastZ - spacing;
+                
+                // Create power-up between obstacles
+                if (obstacles.length % 2 === 0) {
+                    const powerUpZ = lastZ - (spacing / 2); // Place power-up halfway between obstacles
+                    createPowerUp(powerUpZ);
+                }
+            }
+
+            obstacle.position.set(0, 0.8, spawnZ);
+            obstacle.castShadow = true;
+            scene.add(obstacle);
+            obstacles.push({
+                mesh: obstacle,
+                boundingBox: new THREE.Box3().setFromObject(obstacle)
+            });
+        }
+
+        function createCloud() {
+            // Create a group for the cloud parts
+            const cloud = new THREE.Group();
+            
+            // Create main cloud body using multiple spheres
+            const cloudGeometry = new THREE.SphereGeometry(2, 8, 8);
+            const cloudMaterial = new THREE.MeshPhongMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            // Add multiple spheres to create fluffy cloud shape
+            for (let i = 0; i < 5; i++) {
+                const cloudPart = new THREE.Mesh(cloudGeometry, cloudMaterial);
+                cloudPart.position.x = (Math.random() - 0.5) * 3;
+                cloudPart.position.y = (Math.random() - 0.5);
+                cloudPart.position.z = (Math.random() - 0.5) * 2;
+                cloudPart.scale.set(
+                    0.5 + Math.random() * 0.5,
+                    0.5 + Math.random() * 0.3,
+                    0.5 + Math.random() * 0.5
+                );
+                cloud.add(cloudPart);
+            }
+
+            // Random position in sky
+            cloud.position.set(
+                (Math.random() - 0.5) * 100, // Random X position
+                15 + Math.random() * 10,     // Random height
+                -50 - Math.random() * 100    // Random Z position
+            );
+
+            scene.add(cloud);
+            clouds.push({
+                mesh: cloud,
+                speed: 0.02 + Math.random() * 0.03 // Random speed for each cloud
+            });
+        }
+
+        function createBird() {
+            // Create a group for the bird
+            const bird = new THREE.Group();
+
+            // Create bird body
+            const bodyGeometry = new THREE.ConeGeometry(0.3, 1, 4);
+            const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x333333 });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.rotation.x = Math.PI / 2;
+            bird.add(body);
+
+            // Create wings
+            const wingGeometry = new THREE.PlaneGeometry(1.5, 0.5);
+            const wingMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x333333,
+                side: THREE.DoubleSide
+            });
+
+            const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
+            leftWing.position.set(-0.5, 0, 0);
+            bird.add(leftWing);
+
+            const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
+            rightWing.position.set(0.5, 0, 0);
+            bird.add(rightWing);
+
+            // Random position in sky
+            bird.position.set(
+                -50 - Math.random() * 50, // Start from left side
+                20 + Math.random() * 15,   // Random height
+                -30 - Math.random() * 60   // Random depth
+            );
+
+            scene.add(bird);
+            birds.push({
+                mesh: bird,
+                wings: { left: leftWing, right: rightWing },
+                speed: 0.2 + Math.random() * 0.1,
+                wingAngle: 0,
+                wingSpeed: 0.15 + Math.random() * 0.05
+            });
+        }
+
+        function createSkyAndClouds() {
+            // Create sky background
+            const skyGeometry = new THREE.SphereGeometry(500, 32, 32);
+            const skyMaterial = new THREE.MeshBasicMaterial({
+                color: 0x87CEEB,
+                side: THREE.BackSide
+            });
+            const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+            scene.add(sky);
+
+            // Create initial clouds
+            for (let i = 0; i < cloudCount; i++) {
+                createCloud();
+            }
+
+            // Create birds
+            for (let i = 0; i < birdCount; i++) {
+                createBird();
+            }
+        }
+
+        function createGrassField() {
+            const grassGeometry = new THREE.PlaneGeometry(0.2, 1);
+            const grassMaterial = new THREE.MeshPhongMaterial({
+                color: 0x3a5f0b,
+                side: THREE.DoubleSide,
+                transparent: true
+            });
+
+            // Create grass blades in a grid with reduced density
+            for (let z = -500; z < 500; z += 4) { // Increased spacing
+                for (let x = -50; x < 50; x += 4) { // Increased spacing
+                    if (Math.random() > 0.8) { // Reduced probability for less grass
+                        const blade = new THREE.Mesh(grassGeometry, grassMaterial);
+                        
+                        // Position at ground level with slight random offset
+                        blade.position.set(
+                            x + (Math.random() - 0.5),
+                            -1.5,
+                            z + (Math.random() - 0.5)
+                        );
+                        
+                        // Random initial rotation
+                        blade.rotation.y = Math.random() * Math.PI;
+                        
+                        // Random height variation
+                        blade.scale.y = 0.7 + Math.random() * 0.6;
+                        
+                        scene.add(blade);
+                        grassBlades.push({
+                            mesh: blade,
+                            baseX: blade.position.x,
+                            baseZ: blade.position.z,
+                            phase: Math.random() * Math.PI * 2,
+                            speed: 0.5 + Math.random() * 0.5
+                        });
+                    }
+                }
+            }
+        }
+
+        function createGround() {
+            // Create main ground
+            const groundGeometry = new THREE.PlaneGeometry(100, 1000);
+            const groundMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x2d4f0c, // Darker green for base ground
+                side: THREE.DoubleSide
+            });
+            ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Add grass field
+            createGrassField();
+        }
+
+        function updateHighScore() {
+            const currentScore = Math.floor(score);
+            if (currentScore > highScore) {
+                highScore = currentScore;
+                localStorage.setItem('highScore', highScore);
+            }
+            document.getElementById('high-score').textContent = `High Score: ${highScore}`;
+        }
+
+        function update() {
+            if (!gameActive) return;
+
+            // Gradually increase game speed over time
+            timeSinceStart += 1;
+            if (gameSpeed < maxGameSpeed) {
+                gameSpeed = Math.min(
+                    baseGameSpeed + (timeSinceStart * speedIncreaseRate),
+                    maxGameSpeed
+                );
+            }
+
+            // Update score and speed display
+            const currentScore = Math.floor(score);
+            const speedPercent = Math.floor(((gameSpeed - baseGameSpeed) / (maxGameSpeed - baseGameSpeed)) * 100);
+            document.getElementById('score').textContent = 
+                `Score: ${currentScore} (x${scoreMultiplier}) | Speed: ${speedPercent}%`;
+            
+            // Update high score
+            updateHighScore();
+
+            // Update score
+            score += 0.1 * scoreMultiplier;
+
+            // Handle jumping physics
+            if (isJumping) {
+                player.position.y += jumpVelocity;
+                jumpVelocity -= gravity;
+
+                if (player.position.y <= 0) {
+                    player.position.y = 0;
+                    isJumping = false;
+                    jumpVelocity = 0;
+                }
+            }
+
+            // Update wind time
+            windTime += 0.01;
+
+            // Update grass animation
+            grassBlades.forEach(blade => {
+                const windStrength = Math.sin(windTime) * 0.2;
+                const individualWave = Math.sin(windTime * blade.speed + blade.phase) * 0.1;
+                blade.mesh.rotation.x = windStrength + individualWave;
+                blade.mesh.position.z += gameSpeed;
+                if (blade.mesh.position.z > 50) {
+                    blade.mesh.position.z = blade.baseZ - 1000;
+                }
+            });
+
+            // Update power-ups
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                const powerUp = powerUps[i];
+                if (!powerUp.active) continue;
+
+                powerUp.mesh.position.z += gameSpeed;
+                powerUp.mesh.rotation.y += powerUp.rotationSpeed;
+                powerUp.mesh.position.y = 1.2 + Math.sin(windTime * 2 + powerUp.bouncePhase) * 0.1;
+
+                // Check collection
+                const playerBox = new THREE.Box3().setFromObject(player);
+                const powerUpBox = new THREE.Box3().setFromObject(powerUp.mesh);
+                
+                if (playerBox.intersectsBox(powerUpBox)) {
+                    // Activate power-up effect
+                    scoreMultiplier = 2;
+                    player.children.forEach(part => {
+                        part.material.color.setHex(0xffff00); // Yellow for active power-up
+                    });
+                    
+                    // Remove power-up
+                    scene.remove(powerUp.mesh);
+                    powerUps.splice(i, 1);
+
+                    // Reset after 5 seconds
+                    setTimeout(() => {
+                        scoreMultiplier = 1;
+                        player.children.forEach(part => {
+                            part.material.color.setHex(0x4CAF50); // Reset to original green
+                        });
+                    }, 5000);
+                    continue;
+                }
+
+                // Remove if too far behind
+                if (powerUp.mesh.position.z > 15) {
+                    scene.remove(powerUp.mesh);
+                    powerUps.splice(i, 1);
+                }
+            }
+
+            // Update clouds
+            clouds.forEach(cloud => {
+                cloud.mesh.position.x += cloud.speed;
+                if (cloud.mesh.position.x > 50) {
+                    cloud.mesh.position.x = -50;
+                    cloud.mesh.position.z = -50 - Math.random() * 100;
+                    cloud.mesh.position.y = 15 + Math.random() * 10;
+                }
+            });
+
+            // Update birds
+            birds.forEach(bird => {
+                bird.mesh.position.x += bird.speed;
+                bird.wingAngle += bird.wingSpeed;
+                bird.wings.left.rotation.z = Math.sin(bird.wingAngle) * 0.5;
+                bird.wings.right.rotation.z = -Math.sin(bird.wingAngle) * 0.5;
+
+                if (bird.mesh.position.x > 50) {
+                    bird.mesh.position.x = -50;
+                    bird.mesh.position.z = -30 - Math.random() * 60;
+                    bird.mesh.position.y = 20 + Math.random() * 15;
+                }
+            });
+
+            // Manage obstacles
+            const currentTime = Date.now();
+            const visibleObstacles = obstacles.filter(obs => obs.mesh.position.z < 15);
+            
+            if (visibleObstacles.length < targetObstacleCount && 
+                currentTime - lastObstacleTime > obstacleSpawnDelay) {
+                createObstacle();
+                lastObstacleTime = currentTime;
+            }
+
+            // Move and manage obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                obstacle.mesh.position.z += gameSpeed;
+                
+                // Update bounding boxes for collision detection
+                const playerBox = new THREE.Box3().setFromObject(player);
+                const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+                
+                playerBox.expandByScalar(0.2);
+                obstacleBox.expandByScalar(0.2);
+
+                if (playerBox.intersectsBox(obstacleBox)) {
+                    const verticalOverlap = Math.abs(player.position.y - obstacle.mesh.position.y) < 1.2;
+                    if (verticalOverlap) {
+                        gameOver();
+                        return;
+                    }
+                }
+
+                // Remove obstacles that are far behind the player and count them
+                if (obstacle.mesh.position.z > 15) {
+                    scene.remove(obstacle.mesh);
+                    obstacles.splice(i, 1);
+                    obstaclesPassed++;
+
+                    // Increase difficulty every 2 obstacles
+                    if (obstaclesPassed % difficultyInterval === 0) {
+                        gameSpeed = Math.min(gameSpeed + speedIncreaseRate, maxGameSpeed);
+                        console.log(`Speed Level ${Math.floor(obstaclesPassed / difficultyInterval)}: ${gameSpeed.toFixed(2)}`);
+                    }
+                }
+            }
+
+            // Update camera position
+            const targetCameraPosition = new THREE.Vector3(
+                player.position.x + cameraOffset.x,
+                player.position.y + cameraOffset.y,
+                player.position.z + cameraOffset.z
+            );
+
+            camera.position.lerp(targetCameraPosition, 0.05);
+            
+            const lookAtPoint = new THREE.Vector3(
+                player.position.x,
+                player.position.y + 1,
+                player.position.z
+            );
+            camera.lookAt(lookAtPoint);
+        }
+
+        function gameOver() {
+            gameActive = false;
+            
+            // Update final scores
+            const finalScore = Math.floor(score);
+            document.getElementById('final-score').textContent = finalScore;
+            document.getElementById('final-high-score').textContent = highScore;
+            
+            // Show game over screen with both scores
+            document.getElementById('game-over').style.display = 'block';
+            
+            // Stop all movement
+            gameSpeed = 0;
+            jumpVelocity = 0;
+        }
+
+        function restartGame() {
+            // Remove all obstacles and power-ups
+            obstacles.forEach(obstacle => scene.remove(obstacle.mesh));
+            obstacles = [];
+            powerUps.forEach(powerUp => scene.remove(powerUp.mesh));
+            powerUps = [];
+            
+            // Reset game state
+            score = 0;
+            scoreMultiplier = 1;
+            gameSpeed = baseGameSpeed;
+            timeSinceStart = 0;
+            obstaclesPassed = 0;
+            isJumping = false;
+            isCrouching = false;
+            jumpVelocity = 0;
+            gameActive = true;
+            lastObstacleTime = 0;
+
+            // Reset player position and color
+            player.position.set(0, 0, 0);
+            player.scale.y = 1;
+            player.children.forEach(part => {
+                part.material.color.setHex(0x4CAF50);
+            });
+
+            // Hide game over screen and update score displays
+            document.getElementById('game-over').style.display = 'none';
+            document.getElementById('score').textContent = 'Score: 0';
+            updateHighScore();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+            renderer.render(scene, camera);
+        }
+
+        // Start the game
+        init();
+        animate();
+    </script>
+</body>
+</html> 
